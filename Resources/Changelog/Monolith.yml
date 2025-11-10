@@ -13941,3 +13941,10 @@ Entries:
   id: 1542
   time: '2025-11-10T07:13:26.0000000+00:00'
   url: https://github.com/Monolith-Station/Monolith/pull/2584
+- author: NazrinNya
+  changes:
+    - type: Fix
+      message: 'Tesla bots won''t make you go blind anymore '
+  id: 1543
+  time: '2025-11-10T23:38:19.0000000+00:00'
+  url: https://github.com/Monolith-Station/Monolith/pull/2598
