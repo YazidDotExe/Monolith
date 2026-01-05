@@ -479,14 +479,14 @@
 - type: entity
   name: MI Pieper Revolving Rifle (.45 magnum)
   parent: [ BaseWeaponRevolver, BaseGunWieldable ]
-  id: WeaponRifle
+  id: WeaponMIPieperRifle
   description: A 9-round holding revolver rifle, from ancient terran history. Has been rechambered to 45 magnum, and features a gas seal system when firing to protect the shooters arm. A reliable and efficient rifle for any new Militia Member.
   components:
   - type: Sprite
     scale: 0.75 , 0.75
-    sprite: _Mono/Objects/Weapons/Guns/Snipers/pieper_rifle.rsi
+    sprite: _Mono/Objects/Weapons/Guns/Rifles/pieper_rifle.rsi
   - type: Clothing
-    sprite: _Mono/Objects/Weapons/Guns/Snipers/pieper_rifle.rsi
+    sprite: _Mono/Objects/Weapons/Guns/Rifles/pieper_rifle.rsi
   - type: StaticPrice
     price: 750
     vendPrice: 5000
@@ -495,17 +495,11 @@
       tags:
         - Cartridge45_magnumFMJ
         - SpeedLoader45_magnumFMJ
-    capacity: 8
+    capacity: 9
     proto: Cartridge45_magnumFMJ
   - type: Gun
-    selectedMode: SemiAuto
-    fireRate: 1
-    availableModes:
-    - SemiAuto
-    soundGunshot:
-      path: /Audio/_Mono/Weapons/Guns/SmallArms/Gunshots/python_fire.ogg
-      params:
-        volume: 2.25
+    fireRate: 2
+    resetOnHandSelected: false
   - type: SpeedModifiedOnWield
     walkModifier: 0.65
     sprintModifier: 0.5
