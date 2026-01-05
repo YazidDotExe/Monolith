@@ -487,6 +487,10 @@
     sprite: _Mono/Objects/Weapons/Guns/Rifles/pieper_rifle.rsi
   - type: Clothing
     sprite: _Mono/Objects/Weapons/Guns/Rifles/pieper_rifle.rsi
+    slots:
+    - Back
+    - Belt
+    - SuitStorage
   - type: StaticPrice
     price: 750
     vendPrice: 5000
