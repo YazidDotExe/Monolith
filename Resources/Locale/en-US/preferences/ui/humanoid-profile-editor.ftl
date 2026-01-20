@@ -75,7 +75,7 @@ humanoid-profile-editor-clear-all-traits-button = Clear All Traits
 humanoid-profile-editor-clear-all-traits-confirm = Confirm Clear
 
 trait-category-disabilities = Disabilities
-trait-category-speech = Accents
+trait-category-speech = Speech traits
 trait-category-quirks = Quirks
 # Mono
 trait-category-physical = Physical

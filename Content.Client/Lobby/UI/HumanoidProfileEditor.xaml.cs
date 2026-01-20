@@ -35,6 +35,7 @@ using Robust.Shared.Enums;
 using Robust.Shared.Prototypes;
 using Robust.Shared.Utility;
 using Direction = Robust.Shared.Maths.Direction;
+using Content.Shared._DV.Traits; // DV - Traits
 
 namespace Content.Client.Lobby.UI
 {
@@ -162,6 +163,8 @@ namespace Content.Client.Lobby.UI
             {
                 Save?.Invoke();
             };
+
+            Traits.OnTraitsChanged += OnTraitsSelectionChanged; // DeltaV
 
             #region Left
 
@@ -437,7 +440,7 @@ namespace Content.Client.Lobby.UI
 
             #endregion Jobs
 
-            RefreshTraits();
+            // RefreshTraits(); // DeltaV
 
             #region Company
 
@@ -551,12 +554,68 @@ namespace Content.Client.Lobby.UI
             IsDirty = false;
         }
 
+        // Begin DeltaV - Traits Integration
+        /// <summary>
+        /// Called when trait selection changes in the TraitsTab.
+        /// Updates the profile with the new trait selection.
+        /// </summary>
+        private void OnTraitsSelectionChanged(HashSet<ProtoId<TraitPrototype>> traits)
+        {
+            if (Profile is null)
+                return;
+
+            // Remove all existing traits - iterate directly over readonly collection
+            foreach (var existingTrait in Profile.TraitPreferences)
+            {
+                Profile = Profile.WithoutTraitPreference(existingTrait, _prototypeManager);
+            }
+
+            // Add newly selected traits
+            foreach (var trait in traits)
+            {
+                Profile = Profile.WithTraitPreference(trait.Id, _prototypeManager);
+            }
+
+            SetDirty();
+        }
+
+        /// <summary>
+        /// Updates the traits tab with the current profile's selected traits.
+        /// </summary>
+        private void UpdateTraitsSelection()
+        {
+            TraitsList.RemoveAllChildren();
+
+            var traits = _prototypeManager.EnumeratePrototypes<TraitPrototype>().OrderBy(t => Loc.GetString(t.Name)).ToList();
+            TabContainer.SetTabTitle(3, Loc.GetString("humanoid-profile-editor-traits-tab"));
+
+            if (traits.Count < 1)
+            {
+                Traits.SetSelectedTraits(new HashSet<ProtoId<TraitPrototype>>());
+                return;
+            }
+
+            // Convert profile's trait preferences (strings) to ProtoId<TraitPrototype>
+            var selectedTraits = new HashSet<ProtoId<TraitPrototype>>(Profile.TraitPreferences.Count);
+            foreach (var traitId in Profile.TraitPreferences)
+            {
+                // Validate that the trait still exists in prototypes
+                if (_prototypeManager.HasIndex(traitId))
+                {
+                    selectedTraits.Add(new ProtoId<TraitPrototype>(traitId));
+                }
+            }
+
+            Traits.SetSelectedTraits(selectedTraits);
+        }
+        // End DeltaV - Traits Integration
+
         /// <summary>
         /// Refreshes the flavor text editor status.
         /// </summary>
         public void RefreshFlavorText()
         {
-            if (_cfgManager.GetCVar(CCVars.FlavorText))
+            if (_allowFlavorText)
             {
                 if (_flavorText != null)
                     return;
@@ -585,425 +644,122 @@ namespace Content.Client.Lobby.UI
         /// <summary>
         /// Refreshes traits selector
         /// </summary>
-        public void RefreshTraits()
-        {
-            TraitsList.DisposeAllChildren();
-
-            EnforceSpeciesTraitRestrictions();
-
-            var traits = _prototypeManager.EnumeratePrototypes<TraitPrototype>().OrderBy(t => Loc.GetString(t.Name)).ToList();
-            TabContainer.SetTabTitle(2, Loc.GetString("humanoid-profile-editor-traits-tab"));
-
-            if (traits.Count < 1)
-            {
-                TraitsList.AddChild(new Label
-                {
-                    Text = Loc.GetString("humanoid-profile-editor-no-traits"),
-                    FontColorOverride = Color.Gray,
-                });
-                return;
-            }
-
-            // Dictionary to store category buttons - moved up before it's used
-            Dictionary<string, TraitCategoryButton> categoryButtons = new();
-
-            var clearAllButton = new ConfirmButton
-            {
-                Text = Loc.GetString("humanoid-profile-editor-clear-all-traits-button"),
-                ConfirmationText = Loc.GetString("humanoid-profile-editor-clear-all-traits-confirm"),
-                MinSize = new Vector2(0, 30)
-            };
-            clearAllButton.OnPressed += _ =>
-            {
-                if (Profile == null)
-                    return;
-
-                Profile = Profile.WithoutAllTraitPreferences();
-                SetDirty();
-                RefreshTraits();
-            };
-            TraitsList.AddChild(clearAllButton);
-
-            // Add expand/collapse all buttons
-            var expandCollapseButtons = new TraitExpandCollapseButtons();
-            expandCollapseButtons.OnExpandCollapseAll += expanded =>
-            {
-                // Set the static dictionary state
-                TraitCategoryButton.SetAllExpanded(expanded);
-
-                // Update all visible category buttons
-                foreach (var button in categoryButtons.Values)
-                {
-                    button.SetExpanded(expanded);
-                }
-            };
-            TraitsList.AddChild(expandCollapseButtons);
-
-            // Setup model
-            Dictionary<string, List<string>> traitGroups = new();
-            List<string> defaultTraits = new();
-            traitGroups.Add(TraitCategoryPrototype.Default, defaultTraits);
-
-            var allSelectors = new Dictionary<ProtoId<TraitPrototype>, TraitPreferenceSelector>();
-
-            foreach (var trait in traits)
-            {
-                if (trait.Category == null)
-                {
-                    defaultTraits.Add(trait.ID);
-                    continue;
-                }
-
-                if (!_prototypeManager.HasIndex(trait.Category))
-                    continue;
-
-                var group = traitGroups.GetOrNew(trait.Category);
-                group.Add(trait.ID);
-            }
-
-            // Create UI view from model
-            foreach (var (categoryId, categoryTraits) in traitGroups)
-            {
-                // Skip the default category if it has no traits
-                if (categoryId == TraitCategoryPrototype.Default && categoryTraits.Count == 0)
-                    continue;
-
-                TraitCategoryPrototype? category = null;
-                string categoryName;
-                int? maxTraitPoints = null;
-
-                if (categoryId != TraitCategoryPrototype.Default)
-                {
-                    category = _prototypeManager.Index<TraitCategoryPrototype>(categoryId);
-                    categoryName = Loc.GetString(category.Name);
-                    maxTraitPoints = category.MaxTraitPoints;
-                }
-                else
-                {
-                    categoryName = Loc.GetString("humanoid-profile-editor-traits-default-category");
-                }
-
-                categoryTraits.Sort((a, b) =>
-                {
-                    var traitA = _prototypeManager.Index<TraitPrototype>(a);
-                    var traitB = _prototypeManager.Index<TraitPrototype>(b);
-
-                    var costCompare = traitA.Cost.CompareTo(traitB.Cost);
-                    if (costCompare != 0)
-                        return costCompare;
-
-                    var traitNameA = Loc.GetString(traitA.Name);
-                    var traitNameB = Loc.GetString(traitB.Name);
-                    return string.Compare(traitNameA, traitNameB, StringComparison.CurrentCulture);
-                });
-
-                // Create category button
-                var categoryButton = new TraitCategoryButton(categoryName);
-                categoryButtons[categoryId] = categoryButton;
-                TraitsList.AddChild(categoryButton);
-
-                List<TraitPreferenceSelector?> selectors = new();
-                var selectionCount = 0;
-
-                // First pass: calculate current points and create selectors
-                foreach (var traitProto in categoryTraits)
-                {
-                    var trait = _prototypeManager.Index<TraitPrototype>(traitProto);
-                    var selector = new TraitPreferenceSelector(trait);
-
-                    selector.Preference = Profile?.TraitPreferences.Contains(trait.ID) == true;
-                    if (selector.Preference)
-                        selectionCount += trait.Cost;
-
-                    {
-                        var tooltipParts = new List<string>();
-                        if (trait.Description is { } tdesc)
-                            tooltipParts.Add(Loc.GetString(tdesc));
-
-                        if (trait.MutuallyExclusiveTraits.Count > 0)
-                        {
-                            var names = new List<string>();
-                            foreach (var exId in trait.MutuallyExclusiveTraits)
-                            {
-                                if (_prototypeManager.TryIndex(exId, out var exProto))
-                                    names.Add($"[color=#ADD8E6]{Loc.GetString(exProto.Name)}[/color]");
-                            }
-                            if (names.Count > 0)
-                                tooltipParts.Add($"You must not have one of these traits: {string.Join(", ", names)}");
-                        }
-
-                        if (trait.SpeciesBlacklist.Count > 0)
-                        {
-                            var names = new List<string>();
-                            foreach (var speciesId in trait.SpeciesBlacklist)
-                            {
-                                if (_prototypeManager.TryIndex(speciesId, out var speciesProto))
-                                    names.Add($"[color=#087209]{Loc.GetString(speciesProto.Name)}[/color]");
-                            }
-                            if (names.Count > 0)
-                                tooltipParts.Add($"You must not be: {string.Join(", ", names)}");
-                        }
-
-                        if (tooltipParts.Count > 0)
-                            selector.SetTooltip(string.Join("\n", tooltipParts));
-                    }
-
-                    allSelectors[trait.ID] = selector;
-
-                    selector.PreferenceChanged += preference =>
-                    {
-                        if (preference)
-                        {
-                            // Calculate current points for this category before adding the new trait
-                            var currentPoints = 0;
-                            if (category != null && category.MaxTraitPoints >= 0)
-                            {
-                                foreach (var existingTraitId in Profile?.TraitPreferences ?? new HashSet<ProtoId<TraitPrototype>>())
-                                {
-                                    if (!_prototypeManager.TryIndex<TraitPrototype>(existingTraitId, out var existingProto))
-                                        continue;
-
-                                    if (existingProto.Category == categoryId)
-                                        currentPoints += existingProto.Cost;
-                                }
-
-                                // Check if adding this trait would exceed the maximum points
-                                if (currentPoints + trait.Cost > category.MaxTraitPoints)
-                                {
-                                    // Reset the selection without triggering the event
-                                    selector.Preference = false;
-                                    return;
-                                }
-                            }
-
-                            var oldProfile = Profile;
-                            Profile = Profile?.WithTraitPreference(trait.ID, _prototypeManager);
-
-                            // If the profile didn't change, it means the trait couldn't be added (e.g., due to point limits)
-                            if (Profile == oldProfile)
-                            {
-                                // Reset the selection without triggering the event
-                                selector.Preference = false;
-                                return;
-                            }
-                        }
-                        else
-                        {
-                            Profile = Profile?.WithoutTraitPreference(trait.ID, _prototypeManager);
-                        }
-
-                        SetDirty();
-
-                        UpdateTraitIncompatibilityVisibility(allSelectors);
-
-                        // Instead of refreshing the entire UI, just update the point counter if needed
-                        if (category is { MaxTraitPoints: >= 0 })
-                        {
-                            // Recalculate points for this category
-                            var currentPoints = 0;
-                            foreach (var traitId in Profile?.TraitPreferences ?? new HashSet<ProtoId<TraitPrototype>>())
-                            {
-                                if (!_prototypeManager.TryIndex<TraitPrototype>(traitId, out var proto))
-                                    continue;
-
-                                if (proto.Category == category.ID)
-                                    currentPoints += proto.Cost;
-                            }
-
-                            // Find and update the point counter label
-                            if (categoryButton.TraitsContainer.ChildCount >= 2)
-                            {
-                                var maxPoints = category.MaxTraitPoints.Value;
-                                float pointsLeft = Math.Max(0, maxPoints - currentPoints);
-                                if (categoryButton.TraitsContainer.GetChild(0) is ProgressBar progressBar)
-                                {
-                                    progressBar.Value = pointsLeft;
-                                    float percentRemaining = pointsLeft / maxPoints;
-
-                                    Color barColor;
-
-                                    if (percentRemaining > 0.5f)
-                                    {
-                                        barColor = Color.FromHex("#33FF33");
-                                    }
-                                    else if (percentRemaining > 0.25f)
-                                    {
-                                        barColor = Color.FromHex("#FFFF33");
-                                    }
-                                    else
-                                    {
-                                        barColor = Color.FromHex("#FF3333");
-                                    }
-
-                                    if (progressBar.ForegroundStyleBoxOverride is StyleBoxFlat styleBox)
-                                    {
-                                        styleBox.BackgroundColor = barColor;
-                                    }
-                                }
-
-                                if (categoryButton.TraitsContainer.GetChild(1) is Label pointsLabel)
-                                {
-                                    pointsLabel.Text = Loc.GetString("humanoid-profile-editor-trait-count-hint",
-                                        ("current", pointsLeft),
-                                        ("max", category.MaxTraitPoints));
-                                }
-                            }
-
-                            // Update all trait colors based on the new point total
-                            RefreshTraitColors(categoryButton, category, currentPoints);
-                        }
-                    };
-                    selectors.Add(selector);
-                }
-
-                // Selection counter
-                if (category is { MaxTraitPoints: >= 0 })
-                {
-                    var maxPoints = category.MaxTraitPoints.Value;
-                    var progressBar = new ProgressBar
-                    {
-                        MinHeight = 4,
-                        SetHeight = 4f,
-                        MinValue = 0,
-                        MaxValue = maxPoints,
-                        Value = Math.Max(0, maxPoints - selectionCount),
-                        Margin = new Thickness(0, 0, 0, 2)
-                    };
-
-                    float pointsLeft = Math.Max(0, maxPoints - selectionCount);
-                    float percentRemaining = pointsLeft / maxPoints;
-
-                    Color barColor;
-                    if (percentRemaining > 0.5f)
-                    {
-                        barColor = Color.FromHex("#33FF33");
-                    }
-                    else if (percentRemaining > 0.25f)
-                    {
-                        barColor = Color.FromHex("#FFFF33");
-                    }
-                    else
-                    {
-                        barColor = Color.FromHex("#FF3333");
-                    }
-
-                    progressBar.ForegroundStyleBoxOverride = new StyleBoxFlat
-                    {
-                        BackgroundColor = barColor,
-                    };
-
-                    categoryButton.AddTrait(progressBar);
-
-                    categoryButton.AddTrait(new Label
-                    {
-                        Text = Loc.GetString("humanoid-profile-editor-trait-count-hint", ("current", pointsLeft), ("max", category.MaxTraitPoints)),
-                        FontColorOverride = Color.Gray
-                    });
-                }
-
-                // Second pass: add selectors to UI with appropriate colors
-                foreach (var selector in selectors)
-                {
-                    if (selector == null)
-                        continue;
-
-                    // Color traits red if they would exceed the point limit
-                    if (category is { MaxTraitPoints: >= 0 })
-                    {
-                        // If this trait would exceed the limit when added to current selection
-                        if (!selector.Preference && selector.Cost + selectionCount > category.MaxTraitPoints)
-                        {
-                            selector.SetUnavailable(true);
-                        }
-                        // If this trait is already selected but would exceed the limit if added now
-                        else if (selector.Preference && selectionCount > category.MaxTraitPoints)
-                        {
-                            // This shouldn't happen normally, but just in case
-                            selector.SetUnavailable(true);
-                        }
-                    }
-
-                    categoryButton.AddTrait(selector);
-                }
-
-                UpdateTraitIncompatibilityVisibility(allSelectors);
-            }
-        }
-
-        // Helper method to refresh trait colors when points change
-        private void RefreshTraitColors(TraitCategoryButton categoryButton, TraitCategoryPrototype category, int currentPoints)
-        {
-            // Skip the first child which is the points label
-            for (int i = 1; i < categoryButton.TraitsContainer.ChildCount; i++)
-            {
-                if (categoryButton.TraitsContainer.GetChild(i) is TraitPreferenceSelector selector)
-                {
-                    // Reset color
-                    selector.TraitButton.ModulateSelfOverride = null;
-                    selector.SetUnavailable(false);
-
-                    // If this trait would exceed the limit when added to current selection
-                    if (!selector.Preference && selector.Cost + currentPoints > category.MaxTraitPoints)
-                    {
-                        selector.SetUnavailable(true);
-                    }
-                    // Enable traits that can now be selected
-                    else if (!selector.Preference && selector.Cost + currentPoints <= category.MaxTraitPoints)
-                    {
-                        selector.SetUnavailable(false);
-                    }
-                }
-            }
-        }
-
-        private void UpdateTraitIncompatibilityVisibility(Dictionary<ProtoId<TraitPrototype>, TraitPreferenceSelector> allSelectors)
-        {
-            var selected = Profile?.TraitPreferences ?? new HashSet<ProtoId<TraitPrototype>>();
-            var currentSpecies = Profile?.Species;
-
-            foreach (var (traitId, selector) in allSelectors)
-            {
-                var hide = false;
-
-                if (selected.Contains(traitId))
-                {
-                    selector.Visible = true;
-                    continue;
-                }
-
-                if (!_prototypeManager.TryIndex<TraitPrototype>(traitId, out var thisProto))
-                {
-                    selector.Visible = false;
-                    continue;
-                }
-
-                if (currentSpecies != null)
-                {
-                    ProtoId<SpeciesPrototype> speciesId = currentSpecies.Value;
-                    if (thisProto.SpeciesBlacklist.Contains(speciesId))
-                    {
-                        hide = true;
-                    }
-                }
-
-                if (!hide)
-                {
-                    foreach (var sel in selected)
-                    {
-                        if (!_prototypeManager.TryIndex<TraitPrototype>(sel, out var selProto))
-                            continue;
-
-                        if (selProto.MutuallyExclusiveTraits.Contains(traitId) || thisProto.MutuallyExclusiveTraits.Contains(sel))
-                        {
-                            hide = true;
-                            break;
-                        }
-                    }
-                }
-
-                selector.Visible = !hide;
-            }
-        }
+        // public void RefreshTraits()
+        // {
+        //     TraitsList.RemoveAllChildren();
+        //
+        //     var traits = _prototypeManager.EnumeratePrototypes<TraitPrototype>().OrderBy(t => Loc.GetString(t.Name)).ToList();
+        //     TabContainer.SetTabTitle(3, Loc.GetString("humanoid-profile-editor-traits-tab"));
+        //
+        //     if (traits.Count < 1)
+        //     {
+        //         TraitsList.AddChild(new Label
+        //         {
+        //             Text = Loc.GetString("humanoid-profile-editor-no-traits"),
+        //             FontColorOverride = Color.Gray,
+        //         });
+        //         return;
+        //     }
+        //
+        //     // Setup model
+        //     Dictionary<string, List<string>> traitGroups = new();
+        //     List<string> defaultTraits = new();
+        //     traitGroups.Add(TraitCategoryPrototype.Default, defaultTraits);
+        //
+        //     foreach (var trait in traits)
+        //     {
+        //         // Begin DeltaV Additions - Species trait exclusion
+        //         if (Profile?.Species is { } selectedSpecies && trait.ExcludedSpecies.Contains(selectedSpecies))
+        //         {
+        //             Profile = Profile?.WithoutTraitPreference(trait.ID, _prototypeManager);
+        //             continue;
+        //         }
+        //         // End DeltaV Additions
+        //
+        //         if (trait.Category == null)
+        //         {
+        //             defaultTraits.Add(trait.ID);
+        //             continue;
+        //         }
+        //
+        //         if (!_prototypeManager.HasIndex(trait.Category))
+        //             continue;
+        //
+        //         var group = traitGroups.GetOrNew(trait.Category);
+        //         group.Add(trait.ID);
+        //     }
+        //
+        //     // Create UI view from model
+        //     foreach (var (categoryId, categoryTraits) in traitGroups)
+        //     {
+        //         TraitCategoryPrototype? category = null;
+        //
+        //         if (categoryId != TraitCategoryPrototype.Default)
+        //         {
+        //             category = _prototypeManager.Index<TraitCategoryPrototype>(categoryId);
+        //             // Label
+        //             TraitsList.AddChild(new Label
+        //             {
+        //                 Text = Loc.GetString(category.Name),
+        //                 Margin = new Thickness(0, 10, 0, 0),
+        //                 StyleClasses = { StyleClass.LabelHeading },
+        //             });
+        //         }
+        //
+        //         List<TraitPreferenceSelector?> selectors = new();
+        //         var selectionCount = 0;
+        //
+        //         foreach (var traitProto in categoryTraits)
+        //         {
+        //             var trait = _prototypeManager.Index<TraitPrototype>(traitProto);
+        //             var selector = new TraitPreferenceSelector(trait);
+        //
+        //             selector.Preference = Profile?.TraitPreferences.Contains(trait.ID) == true;
+        //             if (selector.Preference)
+        //                 selectionCount += trait.Cost;
+        //
+        //             selector.PreferenceChanged += preference =>
+        //             {
+        //                 if (preference)
+        //                 {
+        //                     Profile = Profile?.WithTraitPreference(trait.ID, _prototypeManager);
+        //                 }
+        //                 else
+        //                 {
+        //                     Profile = Profile?.WithoutTraitPreference(trait.ID, _prototypeManager);
+        //                 }
+        //
+        //                 SetDirty();
+        //                 RefreshTraits(); // If too many traits are selected, they will be reset to the real value.
+        //             };
+        //             selectors.Add(selector);
+        //         }
+        //
+        //         // Selection counter
+        //         if (category is { MaxTraitPoints: >= 0 })
+        //         {
+        //             TraitsList.AddChild(new Label
+        //             {
+        //                 Text = Loc.GetString("humanoid-profile-editor-trait-count-hint", ("current", selectionCount) ,("max", category.MaxTraitPoints)),
+        //                 FontColorOverride = Color.Gray
+        //             });
+        //         }
+        //
+        //         foreach (var selector in selectors)
+        //         {
+        //             if (selector == null)
+        //                 continue;
+        //
+        //             if (category is { MaxTraitPoints: >= 0 } &&
+        //                 selector.Cost + selectionCount > category.MaxTraitPoints)
+        //             {
+        //                 selector.Checkbox.Label.FontColorOverride = Color.Red;
+        //             }
+        //
+        //             TraitsList.AddChild(selector);
+        //         }
+        //     }
+        // }
 
         /// <summary>
         /// Refreshes the species selector.
@@ -1200,11 +956,13 @@ namespace Content.Client.Lobby.UI
             UpdateCMarkingsFacialHair();
             UpdateCompanyControls();
 
+            UpdateTraitsSelection(); // DeltaV - Traits
+
             RefreshAntags();
             RefreshJobs();
             RefreshLoadouts();
             RefreshSpecies();
-            RefreshTraits();
+            // RefreshTraits(); // DeltaV
             RefreshFlavorText();
             ReloadPreview();
 
