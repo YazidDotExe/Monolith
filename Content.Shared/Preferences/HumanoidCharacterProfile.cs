@@ -430,9 +430,7 @@ namespace Content.Shared.Preferences
             var category = traitProto.Category;
 
             // Category not found so dump it.
-            TraitCategoryPrototype? traitCategory = null;
-
-            if (!protoManager.Resolve(category, out traitCategory)) // DeltaV 13/01/26 - Traits: Category is no longer nullable
+            if (!protoManager.TryIndex(category, out TraitCategoryPrototype? traitCategory)) // DeltaV 13/01/26 - Traits: Category is no longer nullable
                 return new(this);
 
             var list = new HashSet<ProtoId<TraitPrototype>>(_traitPreferences) { traitId };

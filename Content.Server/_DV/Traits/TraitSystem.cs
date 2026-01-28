@@ -1,4 +1,6 @@
+using Content.Server._EinsteinEngines.Language;
 using Content.Shared._DV.Traits;
+using Content.Shared._EinsteinEngines.Language.Components;
 using Content.Shared._Mono.CCVar;
 using Content.Shared._DV.Traits.Conditions;
 using Content.Shared._DV.Traits.Effects;
@@ -7,6 +9,8 @@ using Content.Shared.Hands.Components;
 using Content.Shared.Hands.EntitySystems;
 using Content.Shared.Humanoid;
 using Content.Shared.Roles;
+using Content.Shared.Traits;
+using Content.Shared.Whitelist;
 using Robust.Shared.Configuration;
 using Robust.Shared.Player;
 using Robust.Shared.Prototypes;
@@ -23,6 +27,7 @@ public sealed class TraitSystem : EntitySystem
     [Dependency] private readonly ILogManager _log = default!;
     [Dependency] private readonly IPrototypeManager _prototype = default!;
     [Dependency] private readonly SharedHandsSystem _hands = default!;
+    [Dependency] private readonly EntityWhitelistSystem _whitelistSystem = default!;
 
     private int _maxTraitCount;
     private int _maxTraitPoints;
@@ -154,6 +159,18 @@ public sealed class TraitSystem : EntitySystem
                 continue;
             }
 
+            // Check whitelist/blacklist if the old trait prototype format is being used
+            // This supports backward compatibility with traits that use the old prototype structure
+            if (_prototype.TryIndex<Content.Shared.Traits.TraitPrototype>(traitId, out var oldTrait))
+            {
+                if (_whitelistSystem.IsWhitelistFail(oldTrait.Whitelist, player) ||
+                    _whitelistSystem.IsBlacklistPass(oldTrait.Blacklist, player))
+                {
+                    Log.Warning($"Trait {traitId} rejected: whitelist/blacklist check failed");
+                    continue;
+                }
+            }
+
             // Trait is valid, add it
             validTraits.Add(traitId);
             totalPoints += trait.Cost;
@@ -239,6 +256,53 @@ public sealed class TraitSystem : EntitySystem
             catch (Exception e)
             {
                 Log.Error($"Error applying effect {effect.GetType().Name} for trait {trait.ID}: {e}");
+            }
+        }
+
+        // Backward compatibility with old trait prototype format
+        // Check if the old trait prototype format is being used and handle legacy fields
+        if (_prototype.TryIndex<Content.Shared.Traits.TraitPrototype>(trait.ID, out var oldTrait))
+        {
+            // Add components from old prototype format
+            EntityManager.AddComponents(player, oldTrait.Components, false);
+
+            // Einstein Engines - Language handling
+            var language = EntityManager.System<LanguageSystem>();
+
+            if (oldTrait.RemoveLanguagesSpoken is not null)
+                foreach (var lang in oldTrait.RemoveLanguagesSpoken)
+                {
+                    if (TryComp<LanguageKnowledgeComponent>(player, out var knowledgeComp))
+                        language.RemoveLanguage((player, knowledgeComp), lang, true, false);
+                }
+
+            if (oldTrait.RemoveLanguagesUnderstood is not null)
+                foreach (var lang in oldTrait.RemoveLanguagesUnderstood)
+                {
+                    if (TryComp<LanguageKnowledgeComponent>(player, out var knowledgeComp))
+                        language.RemoveLanguage((player, knowledgeComp), lang, false, true);
+                }
+
+            if (oldTrait.LanguagesSpoken is not null)
+                foreach (var lang in oldTrait.LanguagesSpoken)
+                    language.AddLanguage(player, lang, true, false);
+
+            if (oldTrait.LanguagesUnderstood is not null)
+                foreach (var lang in oldTrait.LanguagesUnderstood)
+                    language.AddLanguage(player, lang, false, true);
+
+            // Handle trait gear from old prototype format
+            if (oldTrait.TraitGear != null)
+            {
+                if (TryComp<HandsComponent>(player, out var handsComponent))
+                {
+                    var coords = transform.Coordinates;
+                    var inhandEntity = EntityManager.SpawnEntity(oldTrait.TraitGear, coords);
+                    _hands.TryPickup(player,
+                        inhandEntity,
+                        checkActionBlocker: false,
+                        handsComp: handsComponent);
+                }
             }
         }
     }
